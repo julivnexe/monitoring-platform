@@ -1,0 +1,181 @@
+# =====================================================================
+# Monitoring Platform — Halo CE server observability stack
+# ---------------------------------------------------------------------
+# Three services:
+#   netmon-alert   — Python bot. Reads host iptables/ss counters, tails
+#                    the Lua-written players.log, posts Discord embeds,
+#                    AND now exposes /metrics on :9100 for Prometheus.
+#   prometheus     — scrapes netmon-alert and stores time-series data.
+#   grafana        — visualizes the metrics; dashboards are provisioned
+#                    automatically on first boot.
+#
+# Networking design (the WHY):
+#   - netmon-alert HAS to use network_mode: host. It runs `ss -uan` and
+#     `iptables -L INPUT -v -n` against the *host's* networking namespace
+#     — there's no way to do that from a bridge network. NET_ADMIN cap
+#     lets it INSERT iptables counter rules at startup.
+#   - prometheus + grafana live on a private bridge network. Grafana
+#     talks to Prometheus by service name (`prometheus:9090`), no host
+#     coupling. Prometheus reaches netmon-alert via the host gateway
+#     (`host.docker.internal:9100`) since it's bridge-mode looking out
+#     at a host-mode neighbor.
+#
+# Volumes (the WHY):
+#   - prometheus-data: persistent TSDB across restarts.
+#   - grafana-data:    persistent users/dashboards/state.
+#   - /opt/halo-monitor on host is bind-mounted into netmon-alert so the
+#     bot can read players.log (written by SAPP's Lua running outside
+#     any container) and write its tail bookmark file.
+#
+# Health (the WHY):
+#   Every service has a healthcheck. netmon-alert checks its own /metrics
+#   endpoint — if that returns non-200, the bot is wedged and Docker
+#   restarts it. Prometheus & Grafana have built-in health endpoints we
+#   ping. `restart: unless-stopped` survives reboots without auto-flapping
+#   on a manual `docker compose stop`.
+# =====================================================================
+
+services:
+
+  netmon-alert:
+    build: ./netmon-alert
+    image: netmon-alert:latest
+    container_name: netmon-alert
+    restart: unless-stopped
+    # Host networking required: this container reads HOST iptables
+    # counters and HOST socket state via ss. Bridge networking can't
+    # see those. With host mode, the /metrics port (9100) is bound on
+    # the host directly — no port-mapping needed.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN   # required for `iptables -I INPUT` on container start
+    env_file:
+      - .env
+    volumes:
+      # Bind-mount the host's halo-monitor dir so the bot can:
+      #   - read   players.log    (written by SAPP Lua on the host)
+      #   - write  players.log.pos (tail bookmark — survives restarts)
+      - /opt/halo-monitor:/opt/halo-monitor
+    healthcheck:
+      # If /metrics doesn't respond, the bot has crashed or is wedged.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/metrics > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    restart: unless-stopped
+    # Bridge network — Prometheus doesn't need to see host sockets.
+    # It reaches netmon-alert at host.docker.internal:9100 (configured
+    # via extra_hosts below so it works on Linux too — Docker auto-adds
+    # this on Mac/Windows but not Linux).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:9090:9090"   # bind to localhost only — Grafana proxies
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"   # POST /-/reload to hot-reload rules
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - obs-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Host-level metrics: CPU, memory, disk, network. Standard Prometheus
+  # exporter — runs in host mode (sees real host /proc + /sys) and binds
+  # to :9101 because :9100 is already taken by the netmon-alert exporter.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      # 0.0.0.0 needed so the docker-bridge gateway (where Prometheus
+      # sits) can reach this. UFW still firewalls 9101 from the public
+      # internet — only the bridge subnet is allowed in.
+      - "--web.listen-address=0.0.0.0:9101"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /:/host:ro,rslave
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    ports:
+      # Exposed publicly so you can hit it at http://<vps-ip>:3000.
+      # Lock this behind a firewall, VPN, or reverse-proxy with TLS for
+      # real production. UFW/iptables rule recommended.
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # Anti-clickjacking + secure cookies; behind TLS, set to "https"
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      # Auto-provision the Prometheus datasource and the netmon dashboard
+      # on first boot. No clicking through Grafana's UI to wire things up.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q '\"database\": \"ok\"' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - obs-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  obs-net:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

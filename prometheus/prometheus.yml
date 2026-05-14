@@ -1,0 +1,38 @@
+# =====================================================================
+# Prometheus scrape config
+#
+# Scraping netmon-alert at host.docker.internal:9100 — that's the only
+# way a bridge-networked Prometheus can reach a host-networked sibling.
+# `extra_hosts: host.docker.internal:host-gateway` in docker-compose
+# makes this name resolvable on Linux.
+#
+# scrape_interval: 15s is a sane default. Don't drop below 5s — Halo
+# tick rate is 30Hz so anything finer just generates noise. 15s gives
+# good Grafana granularity without bloating the TSDB.
+# =====================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: "halo-monitoring-platform"
+
+scrape_configs:
+  - job_name: "netmon-alert"
+    static_configs:
+      - targets: ["host.docker.internal:9100"]
+        labels:
+          service: "netmon-alert"
+
+  # Host-level metrics from node-exporter (CPU, memory, disk, network).
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
+        labels:
+          service: "node-exporter"
+
+  # Prometheus scraping itself — useful for meta-monitoring (e.g. has
+  # the scrape job been failing? what's the rule eval latency?).
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

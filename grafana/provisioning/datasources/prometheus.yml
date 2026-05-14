@@ -1,0 +1,12 @@
+# Auto-provisioned datasource — Grafana picks this up on first boot,
+# no clicking through the UI to wire Prometheus up. `prometheus` is the
+# compose service name, resolvable via the shared bridge network.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

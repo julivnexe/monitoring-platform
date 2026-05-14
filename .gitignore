@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.local
+*.env
+
+# Bot's local forensics data (on the VPS only)
+players.log
+players.log.*
+
+# Compose / Docker artifacts
+.docker/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

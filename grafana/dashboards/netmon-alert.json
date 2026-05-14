@@ -1,0 +1,181 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "uid": "netmon-alert",
+  "title": "netmon-alert overview",
+  "tags": ["halo", "netmon"],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "type": "row",
+      "title": "Networking",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbound PPS per server",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_pps", "legendFormat": "{{server}} (UDP/{{port}})", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1}
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbound bandwidth per server",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_bps", "legendFormat": "{{server}} (UDP/{{port}})", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1}
+    },
+    {
+      "type": "timeseries",
+      "title": "Unique source IPs in flood window",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_unique_src_ips_window", "legendFormat": "{{server}} (UDP/{{port}})", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 40}]}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9}
+    },
+    {
+      "type": "stat",
+      "title": "Active players (per server)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_players_online", "legendFormat": "{{server}}", "refId": "A"}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9}
+    },
+    {
+      "type": "row",
+      "title": "Events & Attacks",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Join / leave rate (per minute)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "rate(netmon_player_joins_total[5m]) * 60", "legendFormat": "joins/min {{server}}", "refId": "A"},
+        {"expr": "rate(netmon_player_leaves_total[5m]) * 60", "legendFormat": "leaves/min {{server}}", "refId": "B"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18}
+    },
+    {
+      "type": "timeseries",
+      "title": "Discord alerts fired (cumulative)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_alerts_fired_total", "legendFormat": "{{server}} — {{kind}}", "refId": "A"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18}
+    },
+    {
+      "type": "stat",
+      "title": "VPN/proxy detections (total)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "netmon_vpn_detections_total", "legendFormat": "{{server}}", "refId": "A"}
+      ],
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 26}
+    },
+    {
+      "type": "stat",
+      "title": "proxycheck.io errors (5m)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "sum(rate(netmon_ip_lookups_total{status=\"error\"}[5m]))", "refId": "A"}
+      ],
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 26}
+    },
+    {
+      "type": "stat",
+      "title": "Webhook errors (5m)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "sum(rate(netmon_webhook_errors_total[5m]))", "refId": "A"}
+      ],
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 26}
+    },
+    {
+      "type": "row",
+      "title": "Host system",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU usage %",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)", "legendFormat": "CPU %", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32}
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory usage %",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))", "legendFormat": "Memory %", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32}
+    },
+    {
+      "type": "stat",
+      "title": "Disk usage % (/)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} * 100)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 40}
+    },
+    {
+      "type": "stat",
+      "title": "Load average (1m)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "node_load1", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 40}
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "time() - node_boot_time_seconds", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 40}
+    },
+    {
+      "type": "timeseries",
+      "title": "Host network throughput (all interfaces)",
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[1m]))", "legendFormat": "RX", "refId": "A"},
+        {"expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[1m]))", "legendFormat": "TX", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "Bps"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 45}
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+# Tell Grafana where to find dashboard JSON files. Anything dropped into
+# /var/lib/grafana/dashboards (bind-mounted from ./grafana/dashboards on
+# the host) gets auto-imported. Editable=false on the dashboard itself
+# would force GitOps-style edits — leaving it editable for now since this
+# is a single-operator deployment.
+apiVersion: 1
+
+providers:
+  - name: "default"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
