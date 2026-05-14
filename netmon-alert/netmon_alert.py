@@ -244,7 +244,7 @@ def current_players_from_log(server_filter=None):
         return [], set()
     active = {}
     try:
-        with open(PLAYER_LOG) as f:
+        with open(PLAYER_LOG, encoding="utf-8", errors="replace") as f:
             for line in f:
                 parts = line.strip().split(",", 5)
                 if len(parts) == 6:
@@ -394,7 +394,7 @@ def rebuild_active_players():
     if not os.path.exists(PLAYER_LOG):
         return
     try:
-        with open(PLAYER_LOG) as f:
+        with open(PLAYER_LOG, encoding="utf-8", errors="replace") as f:
             for line in f:
                 parts = line.strip().split(",", 5)
                 if len(parts) == 6:
@@ -431,7 +431,7 @@ def process_new_log_entries():
     if pos >= size:
         return
     try:
-        with open(PLAYER_LOG) as f:
+        with open(PLAYER_LOG, encoding="utf-8", errors="replace") as f:
             f.seek(pos)
             for line in f:
                 line = line.rstrip("\n")
