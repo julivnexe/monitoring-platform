@@ -102,6 +102,37 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Automatic botnet / DDoS subnet banning. Watches Prometheus for sustained
+  # PPS spikes on Halo ports; on trigger, captures ~15s of traffic via
+  # tcpdump, groups attacker IPs by /24, and adds offending subnets to an
+  # ipset that iptables drops. 24h TTL on every entry. Whitelist sourced
+  # from netmon-alert's players.log so legit players can't be auto-banned.
+  auto-banner:
+    build: ./auto-banner
+    image: auto-banner:latest
+    container_name: auto-banner
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN   # ipset + iptables manipulation
+      - NET_RAW     # tcpdump
+    env_file:
+      - .env
+    environment:
+      - PROMETHEUS_URL=http://127.0.0.1:9090
+      - HALO_PORTS=2310,2312
+    volumes:
+      # read-only: players.log whitelist
+      - /opt/halo-monitor:/opt/halo-monitor:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Host-level metrics: CPU, memory, disk, network. Standard Prometheus
   # exporter — runs in host mode (sees real host /proc + /sys) and binds
   # to :9101 because :9100 is already taken by the netmon-alert exporter.
