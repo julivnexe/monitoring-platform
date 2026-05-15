@@ -46,6 +46,11 @@ UNIQUE_IPS_WINDOW_SEC = int(os.environ.get("UNIQUE_IPS_WINDOW_SEC", "10"))
 UNIQUE_IPS_THRESHOLD = int(os.environ.get("UNIQUE_IPS_THRESHOLD", "40"))
 ALERT_COOLDOWN_SEC = int(os.environ.get("ALERT_COOLDOWN_SEC", "60"))
 POLL_SEC = int(os.environ.get("POLL_SEC", "2"))
+# If a player's IP hasn't appeared in `ss -uan` output for this many seconds,
+# we treat them as ghost-disconnected (SAPP didn't fire EVENT_LEAVE) and
+# synthesize a leave event. Halo client heartbeats are sub-second, so 90s
+# is comfortably above any natural network blip.
+GHOST_TIMEOUT_SEC = int(os.environ.get("GHOST_TIMEOUT_SEC", "90"))
 # ================================
 
 HOSTNAME = socket.gethostname()
@@ -80,7 +85,10 @@ M_IP_LOOKUPS = Counter("netmon_ip_lookups_total",
 # ----------------------------------------
 
 _ip_info_cache = {}
-_active_players = set()
+# Map (server, name, hsh) -> {"ip": "1.2.3.4[:port]", "last_seen": float epoch}.
+# Used both for dedupe (key membership) and for the ghost-prune reconciliation
+# pass (last_seen freshness vs ss output).
+_active_players = {}
 _seen_ips = set()
 
 # In-memory cache: ip -> "🇽🇽 Country" string
@@ -388,11 +396,40 @@ def post_join_leave(server, action, name, ip_with_port=None, returning=False):
                       "timestamp": datetime.now(timezone.utc).isoformat()}]})
 
 
+def reconcile_active_players(seen_ips_per_server, now):
+    """For each active player, refresh last_seen if their IP currently appears
+    in ss output for their server. Prune anyone whose last_seen is older than
+    GHOST_TIMEOUT_SEC and synthesize a leave so Discord + the gauge stay in
+    sync. This is the safety net for SAPP's unreliable EVENT_LEAVE: timeouts
+    and hard disconnects don't trigger Lua, leaving stale 'active' entries
+    forever otherwise."""
+    # Refresh last_seen
+    for key, meta in _active_players.items():
+        server = key[0]
+        player_ip = (meta.get("ip") or "").split(":", 1)[0]
+        if not player_ip:
+            continue
+        if player_ip in seen_ips_per_server.get(server, set()):
+            meta["last_seen"] = now
+    # Prune
+    for key in list(_active_players.keys()):
+        meta = _active_players[key]
+        age = now - meta.get("last_seen", now)
+        if age > GHOST_TIMEOUT_SEC:
+            server, name, hsh = key
+            ip = meta.get("ip", "")
+            print(f"[ghost-prune] {server}/{name} (ip={ip}) silent for "
+                  f"{age:.0f}s — synthesizing leave")
+            _active_players.pop(key, None)
+            post_join_leave(server, "leave", name, ip, returning=False)
+
+
 def rebuild_active_players():
     _active_players.clear()
     _seen_ips.clear()
     if not os.path.exists(PLAYER_LOG):
         return
+    now = time.time()
     try:
         with open(PLAYER_LOG, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -407,16 +444,19 @@ def rebuild_active_players():
                 if action == "startup":
                     for k in list(_active_players):
                         if k[0] == server:
-                            _active_players.discard(k)
+                            _active_players.pop(k, None)
                     continue
                 ip_clean = (ip or "").split(":", 1)[0]
                 if action == "join" and ip_clean:
                     _seen_ips.add(ip_clean)
                 key = (server, name, hsh)
                 if action == "join":
-                    _active_players.add(key)
+                    # Seed last_seen with `now` so ghosts from the log get one
+                    # full GHOST_TIMEOUT_SEC window to prove they're still real
+                    # via ss output before we prune them.
+                    _active_players[key] = {"ip": ip or "", "last_seen": now}
                 elif action == "leave":
-                    _active_players.discard(key)
+                    _active_players.pop(key, None)
     except Exception as e:
         print(f"rebuild_active_players error: {e}")
 
@@ -444,7 +484,7 @@ def process_new_log_entries():
                 if action == "startup":
                     for k in list(_active_players):
                         if k[0] == server:
-                            _active_players.discard(k)
+                            _active_players.pop(k, None)
                     M_PLAYERS.labels(server=server).set(0)
                     continue
                 if action not in ("join", "leave"):
@@ -457,13 +497,13 @@ def process_new_log_entries():
                     returning = bool(ip_clean) and ip_clean in _seen_ips
                     if ip_clean:
                         _seen_ips.add(ip_clean)
-                    _active_players.add(key)
+                    _active_players[key] = {"ip": ip or "", "last_seen": time.time()}
                     post_join_leave(server, "join", name, ip,
                                     returning=returning)
                 else:
                     if key not in _active_players:
                         continue
-                    _active_players.discard(key)
+                    _active_players.pop(key, None)
                     post_join_leave(server, "leave", name, ip,
                                     returning=False)
             set_log_pos(f.tell())
@@ -532,6 +572,11 @@ def main():
         now = time.time()
         process_new_log_entries()
 
+        # IPs currently visible on each server's UDP port — used by the
+        # ghost-pruner below to validate that every "active" player is
+        # actually still talking to the server.
+        seen_ips_per_server = {}
+
         for port, s in states.items():
             name = s["name"]
             pkts, bytes_ = read_port_counter(port)
@@ -574,6 +619,7 @@ def main():
                            ])
 
             cur = conntrack_unique_ips(port)
+            seen_ips_per_server.setdefault(name, set()).update(cur)
             for ip in cur:
                 s["ip_window"].append((now, ip))
             cutoff = now - UNIQUE_IPS_WINDOW_SEC
