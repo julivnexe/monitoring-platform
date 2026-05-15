@@ -119,8 +119,10 @@ services:
     env_file:
       - .env
     environment:
+      # Only values that should NEVER come from .env go here. Anything
+      # operator-tunable (HALO_PORTS, PPS_TRIGGER, etc.) lives in .env
+      # so the same image can ship across deployments without rebuilding.
       - PROMETHEUS_URL=http://127.0.0.1:9090
-      - HALO_PORTS=2310,2312
     volumes:
       # read-only: players.log whitelist
       - /opt/halo-monitor:/opt/halo-monitor:ro
